@@ -1,4 +1,4 @@
-name: YouTube Plus + YouPiP, YTUHD and RYD
+name: YouTube Plus + YTLitePlus Tweaks
 
 on:
   workflow_dispatch:
@@ -8,7 +8,6 @@ on:
         default: ""
         required: true
         type: string
-
       tweak_version:
         description: "The version of the tweak to use. Enter the version manually from dayanch96/YTLite/releases or leave default"
         default: "5.0.2"
@@ -21,7 +20,7 @@ concurrency:
 
 jobs:
   build:
-    name: 
+    name: Build Tweaks
     runs-on: macos-12
     permissions:
       contents: write
@@ -29,9 +28,6 @@ jobs:
     steps:
       - name: Checkout Main
         uses: actions/checkout@v4.1.1
-        with:
-          path: main
-          submodules: recursive
 
       - name: Install Dependencies
         run: brew install make
@@ -58,14 +54,26 @@ jobs:
           path: ${{ github.workspace }}/theos
           submodules: recursive
 
-      - name: Download iOS SDK
+      - name: Download iOS SDKs
         if: steps.theos.outputs.cache-hit != 'true'
         run: |
           git clone --quiet -n --depth=1 --filter=tree:0 https://github.com/theos/sdks/
           cd sdks
-          git sparse-checkout set --no-cone iPhoneOS13.7.sdk
+          git sparse-checkout set --no-cone iPhoneOS13.7.sdk iPhoneOS16.5.sdk
           git checkout
-          mv *.sdk $THEOS/sdks
+          mkdir -p $THEOS/sdks
+          mv iPhoneOS13.7.sdk iPhoneOS16.5.sdk $THEOS/sdks/
+          echo "SDK contents:"
+          ls -R $THEOS/sdks
+        env:
+          THEOS: ${{ github.workspace }}/theos
+
+      - name: Verify Theos and SDK Installation
+        run: |
+          echo "Theos directory contents:"
+          ls -R $THEOS
+          echo "THEOS_SDKS_PATH contents:"
+          ls -R $THEOS/sdks
         env:
           THEOS: ${{ github.workspace }}/theos
 
@@ -73,15 +81,74 @@ jobs:
         run: bash -c "$(curl https://raw.githubusercontent.com/asdfzxcvbn/pyzule/main/install-pyzule.sh)"
 
       - name: Download YouTube
-        id: download_youtube
         run: wget "${{ inputs.ipa_url }}" --no-verbose -O ${{ github.workspace }}/youtube.ipa
 
       - name: Download YouTube Plus
-        id: download_ytp
         run: |
           deb_url="https://github.com/dayanch96/YTLite/releases/download/v${{ inputs.tweak_version }}/com.dvntm.ytlite_${{ inputs.tweak_version }}_iphoneos-arm.deb"
           wget "$deb_url" --no-verbose -O ${{ github.workspace }}/ytplus.deb
 
+      - name: Clone and Build Submodules
+        id: build_submodules
+        run: |
+          mkdir -p ${{ github.workspace }}/Tweaks
+          cd ${{ github.workspace }}/Tweaks
+          
+          git clone --recursive --depth=1 https://github.com/therealFoxster/YTHeaders.git
+          
+          submodules=(
+            "https://github.com/therealFoxster/DontEatMyContent.git"
+            "https://github.com/Balackburn/YTLitePlus"
+            "https://github.com/arichornloverALT/YTVideoOverlay.git"
+            "https://github.com/PoomSmart/YouPiP"
+            "https://github.com/PoomSmart/YTABConfig"
+            "https://github.com/PoomSmart/YTUHD"
+            "https://github.com/PoomSmart/YouGroupSettings"
+            "https://github.com/PoomSmart/YouMute"
+            "https://github.com/PoomSmart/YouQuality"
+            "https://github.com/arichornloverALT/Return-YouTube-Dislikes.git"
+            "https://github.com/arichornloverALT/YouTimeStamp.git"
+            "https://github.com/bhackel/YouLoop"
+          )
+
+          successful_builds=()
+          failed_builds=()
+
+          # Clone and build each submodule
+          for submodule in "${submodules[@]}"; do
+            repo_name=$(basename $submodule .git)
+            if git clone --recursive --depth=1 $submodule $repo_name; then
+              cd $repo_name
+              
+              # Clone YouTubeHeader into the tweak directory
+              git clone --recursive --depth=1 https://github.com/PoomSmart/YouTubeHeader.git
+              
+              if [ -f "Makefile" ]; then
+                echo "Building $repo_name"
+                if make clean package DEBUG=0 FINALPACKAGE=1 THEOS_PACKAGE_SCHEME=rootless; then
+                  if mv packages/*.deb ${{ github.workspace }}/"${repo_name}.deb"; then
+                    successful_builds+=("$repo_name")
+                  else
+                    failed_builds+=("$repo_name (No .deb file produced)")
+                  fi
+                else
+                  failed_builds+=("$repo_name (Build failed)")
+                fi
+              else
+                failed_builds+=("$repo_name (No Makefile)")
+              fi
+              cd ..
+            else
+              failed_builds+=("$repo_name (Clone failed)")
+            fi
+          done
+
+          echo "successful_builds=${successful_builds[*]}" >> $GITHUB_OUTPUT
+          echo "failed_builds=${failed_builds[*]}" >> $GITHUB_OUTPUT
+        env:
+          THEOS: ${{ github.workspace }}/theos
+        continue-on-error: true
+        
       - name: Clone Open in YouTube (Safari extension)
         run: |
           git clone --quiet -n --depth=1 --filter=tree:0 https://github.com/CokePokes/YoutubeExtensions/
@@ -90,66 +157,64 @@ jobs:
           git checkout
           mv *.appex ${{ github.workspace }}
 
-      - name: Clone YouTubeHeader
-        run: |
-          if [ -d "$THEOS/include/YouTubeHeader" ]; then
-            echo "YouTubeHeader exists. Pulling latest changes..."
-            cd $THEOS/include/YouTubeHeader
-            git pull
-          else
-            echo "YouTubeHeader does not exist. Cloning repository..."
-            cd $THEOS/include
-            git clone --quiet --depth=1 https://github.com/PoomSmart/YouTubeHeader.git
-          fi
-        env:
-          THEOS: ${{ github.workspace }}/theos
-
-      - name: Clone YouPiP
-        run: |
-          cd ${{ github.workspace }}
-          git clone --quiet --depth=1 https://github.com/PoomSmart/YouPiP.git
-
-      - name: Clone YTUHD
-        run: |
-          cd ${{ github.workspace }}
-          git clone --quiet --depth=1 https://github.com/PoomSmart/YTUHD.git
-
-      - name: Clone Return-YouTube-Dislikes
-        run: |
-          cd ${{ github.workspace }}
-          git clone --quiet --depth=1 https://github.com/PoomSmart/Return-YouTube-Dislikes.git
-
-      - name: Build YouPiP
-        run: |
-          cd ${{ github.workspace }}/YouPiP
-          make clean package DEBUG=0 FINALPACKAGE=1
-          mv packages/*.deb ${{ github.workspace }}/youpip.deb
-        env:
-          THEOS: ${{ github.workspace }}/theos
-
-      - name: Build YTUHD
-        run: |
-          cd ${{ github.workspace }}/YTUHD
-          make clean package DEBUG=0 FINALPACKAGE=1
-          mv packages/*.deb ${{ github.workspace }}/ytuhd.deb
-        env:
-          THEOS: ${{ github.workspace }}/theos
-
-      - name: Build Return-YouTube-Dislikes
-        run: |
-          cd ${{ github.workspace }}/Return-YouTube-Dislikes
-          make clean package DEBUG=0 FINALPACKAGE=1
-          mv packages/*.deb ${{ github.workspace }}/ryd.deb
-        env:
-          THEOS: ${{ github.workspace }}/theos
-
       - name: Inject tweaks into IPA
-        run: pyzule -i ${{ github.workspace }}/youtube.ipa -o ${{ github.workspace }}/YouTubePlus_${{ inputs.tweak_version }}_Tweaks.ipa -w -f ${{ github.workspace }}/ytplus.deb ${{ github.workspace }}/OpenYoutubeSafariExtension.appex ${{ github.workspace }}/youpip.deb ${{ github.workspace }}/ytuhd.deb ${{ github.workspace }}/ryd.deb
+        id: inject_tweaks
+        run: |
+          tweaks=""
+          for deb in ${{ github.workspace }}/*.deb; do
+            tweaks="$tweaks $deb"
+          done
+          pyzule -i ${{ github.workspace }}/youtube.ipa -o ${{ github.workspace }}/YouTubePlus_${{ inputs.tweak_version }}_AllTweaks.ipa -w -u -f $tweaks ${{ github.workspace }}/OpenYoutubeSafariExtension.appex
+          echo "ipa_size=$(ls -lh ${{ github.workspace }}/YouTubePlus_${{ inputs.tweak_version }}_AllTweaks.ipa | awk '{print $5}')" >> $GITHUB_OUTPUT
 
       - name: Upload to GitHub Releases
         uses: softprops/action-gh-release@v2.0.1
         with:
           tag_name: v${{ github.run_number }}
-          name: YouTubePlus v${{ inputs.tweak_version }} + Tweaks (${{ github.run_number }})
-          files: YouTubePlus_${{ inputs.tweak_version }}_Tweaks.ipa
+          name: YouTubePlus v${{ inputs.tweak_version }} + All Tweaks (${{ github.run_number }})
+          files: YouTubePlus_${{ inputs.tweak_version }}_AllTweaks.ipa
           draft: true
+
+      - name: Generate Job Summary
+        run: |
+          echo "# YouTube Plus Build Summary" >> $GITHUB_STEP_SUMMARY
+          echo "## Build Information" >> $GITHUB_STEP_SUMMARY
+          echo "- YouTube Plus Version: ${{ inputs.tweak_version }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Build Number: ${{ github.run_number }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Final IPA Size: ${{ steps.inject_tweaks.outputs.ipa_size }}" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          echo "## Build Results" >> $GITHUB_STEP_SUMMARY
+          
+          # Process successful builds
+          echo "### Successfully Built and Injected Tweaks" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ steps.build_submodules.outputs.successful_builds }}" ]; then
+            echo "${{ steps.build_submodules.outputs.successful_builds }}" | tr ' ' '\n' | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No successful builds" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Process failed builds
+          echo "### Failed Builds or Injections" >> $GITHUB_STEP_SUMMARY
+          if [ -n "${{ steps.build_submodules.outputs.failed_builds }}" ]; then
+            echo "${{ steps.build_submodules.outputs.failed_builds }}" | tr ' ' '\n' | sed 's/^/- /' >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No failed builds" >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          
+          # Calculate statistics
+          echo "## Build Statistics" >> $GITHUB_STEP_SUMMARY
+          successful_count=$(echo "${{ steps.build_submodules.outputs.successful_builds }}" | wc -w)
+          failed_count=$(echo "${{ steps.build_submodules.outputs.failed_builds }}" | wc -w)
+          total_count=$((successful_count + failed_count))
+          
+          echo "- Total attempted builds: $total_count" >> $GITHUB_STEP_SUMMARY
+          
+          if [ $total_count -gt 0 ]; then
+            success_rate=$(awk "BEGIN {printf \"%.2f\", ($successful_count / $total_count) * 100}")
+            echo "- Success rate: ${success_rate}%" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "- Success rate: N/A (no builds attempted)" >> $GITHUB_STEP_SUMMARY
+          fi
