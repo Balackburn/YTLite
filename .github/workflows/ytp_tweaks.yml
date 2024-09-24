@@ -68,14 +68,6 @@ jobs:
         env:
           THEOS: ${{ github.workspace }}/theos
 
-      - name: Verify Theos and SDK Installation
-        run: |
-          echo "Theos directory contents:"
-          ls -R $THEOS
-          echo "THEOS_SDKS_PATH contents:"
-          ls -R $THEOS/sdks
-        env:
-          THEOS: ${{ github.workspace }}/theos
 
       - name: Install Pyzule
         run: bash -c "$(curl https://raw.githubusercontent.com/asdfzxcvbn/pyzule/main/install-pyzule.sh)"
@@ -93,8 +85,6 @@ jobs:
         run: |
           mkdir -p ${{ github.workspace }}/Tweaks
           cd ${{ github.workspace }}/Tweaks
-          
-          git clone --recursive --depth=1 https://github.com/therealFoxster/YTHeaders.git
           
           submodules=(
             "https://github.com/therealFoxster/DontEatMyContent.git"
@@ -114,14 +104,22 @@ jobs:
           successful_builds=()
           failed_builds=()
 
+          # Clone YouTubeHeader repository once in the parent directory
+          git clone --recursive --depth=1 https://github.com/PoomSmart/YouTubeHeader.git
+
           # Clone and build each submodule
           for submodule in "${submodules[@]}"; do
             repo_name=$(basename $submodule .git)
             if git clone --recursive --depth=1 $submodule $repo_name; then
               cd $repo_name
               
-              # Clone YouTubeHeader into the tweak directory
-              git clone --recursive --depth=1 https://github.com/PoomSmart/YouTubeHeader.git
+              # Create a symbolic link to YouTubeHeader in the tweak directory
+              ln -s ../YouTubeHeader YouTubeHeader
+              
+              # Also create a symbolic link in the parent directory if it doesn't exist
+              if [ ! -e "../YouTubeHeader" ]; then
+                ln -s YouTubeHeader ../YouTubeHeader
+              fi
               
               if [ -f "Makefile" ]; then
                 echo "Building $repo_name"
